@@ -1,0 +1,408 @@
+; ACME 0.96.4
+;
+; FAST LOAD CUSTOM
+; 32 sectors per track (128 bytes per sectors)
+;
+; v0.06 
+;
+; WARNING/restriction: 
+; - you must DRVON / DRVOFF by yourself before/after use (if needed)
+; - Drive header only moves forward (from track 0). So reboot to launch the DISK...
+; - BUFFER must start at offset $00 or $80 of a page!
+;
+; Code: GROUiK/FRENCH TOUCH 
+; License: GPL 3
+;
+; 
+;
+!cpu 6502
+!convtab "a2txt.bin" ; 
+
+!sl "floadc_lbl.a"
+
+		*= $FC00 ; ORG = $FC00 (RAM Langage)
+; =============================================================================
+; Constants
+DRVSM0 	=   	$C0E0
+DRVSM1	=   	$C0E1
+DRVSM2  =   	$C0E2
+DRVSM4  =   	$C0E4
+DRVSM6  =   	$C0E6
+DRVOFF  =   	$C0E8
+DRVON   =   	$C0E9
+DRVRD   =   	$C0EC
+DRVRDM  =   	$C0EE
+DRVSL1  =   	$C0EA
+; =============================================================================
+; ZP
+INTER       	= $0    	; [$D5-$FF] used actually
+INTER2	    	= $FF
+; ...
+CURTRK  		= $D4	; Current track - INIT to zero for the first CALL - DO NOT OVERWRITE THIS VARIABLE
+; ...
+BUFFER   		= $D2 	; Buffer LOW+HIGH ; + $D3
+TEMPA       	= $D1
+TEMPB       	= $D0
+State_Loader	= $CF
+COUNT_TOTAL	= $CE	; nb de secteurs à lire total
+COUNT_TRACK	= $CD	; nb de secteurs à lire pour la piste courante
+TRACK_TO_REACH	= $CC
+; ...
+bChangeP		= $CB
+; =============================================================================
+FLOAD		; $FC00
+!zone
+-		JSR READ
+		LDA State_Loader
+		BEQ .next_track		 
+		BPL -			
+		RTS
+.next_track	JSR NEXT_TRACK
+		JMP FLOAD
+; ============================================================================
+READ		
+; State_Loader:
+; $FF => init
+; $00 => read sector
+; $01 => next track
+; $FF => end of loading
+
+		LDA State_Loader
+		; State_Loader = $FF
+		BMI INIT_READ
+		; State_Loader = $00
+		BEQ +		
+		; State_Loader = $01 - Read x sectors (or try)
+		JSR NEXT_SECTOR
+		BMI +			; error/or already loader... try another one	
+		TAY			; A = sector loaded
+         		LDA #$00			; mark sector as loaded
+         		STA TMARKSECT,Y		; 
+		DEC COUNT_TOTAL		; decremente total sectors count
+        		BEQ .end_loading		; end?
+    		DEC COUNT_TRACK		; decremente track sectors count
+		BNE +		
+    		; LDA #00		     	; LDA = 0 here
+        		STA State_Loader		; go to next track
++		RTS
+		
+.end_loading	; State_Loader = $FF (end of loading)
+		LDA #$FF
+		STA State_Loader
+		; specific for DONUT
+		LDA #01
+		STA bChangeP
+		; ----
+		RTS
+; ============================================================================
+INIT_READ
+!zone
+		; move to next track needed ?
+		LDA CURTRK
+		LSR
+		CMP TRACK_TO_REACH
+		BEQ MARK_SECTORS		; not needed ? mark sector to this track to load
+		LDA #00			; needed ? prepare jmp to next track! 
+		STA State_Loader
+		RTS
+; ============================================================================
+NEXT_TRACK
+!zone
+		; avance d'une piste
+		JSR ARMOVE_ONE_TRACK_UP
+		LDA CURTRK		; demi piste * 2
+		LSR			; /2
+		CMP TRACK_TO_REACH
+		BEQ +
+		RTS			; track not reached - move one more track up
++		; mark sectors à lire pour la piste courante
+MARK_SECTORS
+        		LDA #00
+		STA COUNT_TRACK		; initialisation compteur nb de secteurs à lire pour la piste courante
+		LDY COUNT_TOTAL		; nb global de secteurs restant à lire (cette piste comprise)		
+		
+FIRSTSEC	= * + 1	; 
+		LDX #00			; premier secteur de la piste courante à lire
+-		LDA #$01			; marker
+		STA TMARKSECT,X		; on remplit/reinit les secteurs à lire
+		LDA BUFFER
+		STA TSECBUFFERLOW,X		; on remplit la table avec les valeurs du low buffer ($00/$80) pour la piste		
+		CLC
+		ADC #$80			; prepare buffer for next sector
+		STA BUFFER
+		LDA BUFFER+1
+		STA TSECBUFFERHIGH,X	; fill table with buffer high value for each sectors of the next track
+		ADC #00			; add carry if needed
+		STA BUFFER+1
+		INC COUNT_TRACK
+		DEY			; dec total count
+		BEQ +			; end ? exit...	
+		INX
+		CPX #$20			; 32 sectors ? => full track to load
+ 		BNE -		
+	        	LDA #00
+		STA FIRSTSEC		; on met à 0 pour le début de la piste suivante (tj secteur 0)
+		INC TRACK_TO_REACH		; prepare for next track 
+
++		LDA #01
+		STA State_Loader		; set to read sectors
+		RTS
+; ============================================================================
+NEXT_SECTOR
+; return: sector# loaded / $FF if checksum error/not loaded
+!zone          	
+         		; check entete
+--	 	LDA DRVRD
+         		BPL --
+         		CMP #$D5
+         		BNE --
+-	  	LDA DRVRD
+         		BPL -
+         		CMP #$AA
+         		BNE --
+-	 	LDA DRVRD
+         		BPL -
+         		CMP #$96
+         		BNE --
+
+          	; load sector info (actually only sector#)
+-	  	LDA DRVRD
+         		BPL -
+         		SEC
+		ROL
+-	  	LDY DRVRD
+         		BPL -
+         		STY TEMPB
+         		AND TEMPB
+         		TAY			
+	         	STY SECTOR			
+         		LDA TMARKSECT,Y		; check if THIS sector must be read
+		BNE +			; OK ? go to read data...
+		LDA #$FF			; else sector not loaded
+		RTS
+
++		; calc buffer for THIS sector
+         		LDA TSECBUFFERLOW,Y		; Y = sector#
+		TAX 
+		SEC
+		SBC #$80			
+		STA XBUF3+1
+		LDA TSECBUFFERHIGH,Y	
+		SBC #$00
+		STA XBUF3+2		; third 1/3
+		TXA
+		SEC
+         		SBC #$D6			; first 1/3
+		STA XBUF1+1
+		STA XBUF1B+1
+		LDA TSECBUFFERHIGH,Y
+		SBC #$00
+		STA XBUF1+2
+		CLC
+         		ADC #1
+		STA XBUF1B+2
+		TXA
+		SEC
+         		SBC #$AA			; second 1/3
+		STA XBUF2+1
+		LDA TSECBUFFERHIGH,Y
+		SBC #$00
+		STA XBUF2+2
+
+		; READ DATA of the sector
+            	; check DATA header (D5AAAD)
+--	 	LDA DRVRD
+         		BPL --
+         		CMP #$D5
+         		BNE --
+-	  	LDA DRVRD
+         		BPL -
+          	CMP #$AA
+         		BNE --
+-	  	LDA DRVRD
+         		BPL -
+         		CMP #$AD
+         		BNE --
+	
+          	; loading + denibblelizing DATA           
+         		LDA #0
+         		LDX #$D5			; 43
+--	  	STA TEMPA
+-	  	LDY DRVRD
+         		BPL -
+         		LDA TABDEC,Y
+         		STA INTER,X		; BUF1
+         		EOR TEMPA
+         		INX
+         		BNE --			
+	
+         		LDX #$D5			; 43		
+         		BNE +			; always	
+XBUF1     	STA $FFFF,X		; BUF2=FINALBUFF 1/3
++
+-	  	LDY DRVRD
+         		BPL -
+         		EOR TABDEC,Y
+         		LDY INTER,X		; BUF1
+         		EOR FONC1,Y
+         		INX
+         		BNE XBUF1
+	
+XBUF1B         	STA $FFFF            
+         		AND #$FC			; 0b11111100
+	
+         		LDX #$D5			; 43			
+-	  	LDY DRVRD
+         		BPL -
+         		EOR TABDEC,Y
+         		LDY INTER,X		; BUF1
+         		EOR FONC2,Y
+XBUF2     	STA $FFFF,X		; BUF2=FINALBUFF 2/3
+          	INX
+         		BNE -
+	
+         		AND #$FC			
+                         
+-	 	LDY DRVRD
+         		BPL -
+         		LDX #$D6			; 42    => 43 + 43 + 42 = 128
+--	 	EOR TABDEC,Y				
+         		LDY INTER2,X		; BUF1-1 (because D6)
+         		EOR FONC3,Y
+XBUF3     	STA $FFFF,X		; BUF2=FINALBUFF 3/3
+-	  	LDY DRVRD
+         		BPL -
+         		INX
+         		BNE --
+	
+         		AND #$FC              
+         		EOR TABDEC,Y
+         		BNE .errchk
+
+SECTOR = * + 1         		
+		LDA #00			; return sector# loaded
+         		RTS 	            	; A = sector (OK)
+
+; CHECKSUM ERROR
+.errchk     	LDA #$FF			; A = $FF (bad)
+         		RTS	
+; ============================================================================
+; we move arm FORWARD (only) to next track (only!)
+ARMOVE_ONE_TRACK_UP
+!zone 	                    
+		; phase1
+		LDA CURTRK		; half track (current track * 2)
+         	        	STA TEMPB
+         	        	INC CURTRK
+		JSR ARMOVE2
+         	        	JSR ARMOVE3		; tempo
+         	        	LDA TEMPB
+         	        	AND #3
+         	        	ASL  
+         	        	ORA #0   	         		; timing
+         	        	TAY
+	          LDA DRVSM0,Y
+         	        	JSR ARMOVE3		; tempo
+		; phase2
+         	        	LDA CURTRK
+         	        	STA TEMPB
+         	        	INC CURTRK
+		JSR ARMOVE2
+         	        	JSR ARMOVE3		; tempo
+         	        	LDA TEMPB
+         	        	AND #3
+         	        	ASL  
+         	        	ORA #0   	         		; timing
+         	        	TAY
+	          LDA DRVSM0,Y
+         	        	JSR ARMOVE3		; tempo
+		RTS
+
+ARMOVE2  	        	LDA CURTRK
+         	        	AND #3
+         	        	ASL  
+         	        	ORA #0          		; timing
+         	        	TAY
+	          LDA DRVSM1,Y
+  	        	RTS
+								
+ARMOVE3  	        	LDA #$28
+    		SEC
+--  	        	STA TEMPA
+-  	        	SBC #1
+         	        	BNE -
+         	        	LDA TEMPA
+         	        	SBC #1
+         	        	BNE --
+         	        	RTS		
+; ============================================================================
+		; Tables
+		; sectors to load for each track (filled later)
+TMARKSECT   	!byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00 
+		;      00  01  02  03  04  05  06  07  08  09  10	 11  12  13  14  15  16  17  18  19  20  21  22  23  24  25  26  27  28  29  30  31  32  33	
+		; buffer low/high for each sector (filled later)
+TSECBUFFERLOW	!byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+TSECBUFFERHIGH	!byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+				
+		; --> 258 valeurs
+FONC1   		!byte 00
+FONC2		!byte 00
+FONC3   		!byte 00,00,02,00,00,00,01,00,00,00,03,00,00,00,00,02,00,00,02,02,00,00,01,02,00,00,03,02,00,00,00,01
+		!byte 00,00,02,01,00,00,01,01,00,00,03,01,00,00,00,03,00,00,02,03,00,00,01,03,00,00,03,03,00,00,00,00
+		!byte 02,00,02,00,02,00,01,00,02,00,03,00,02,00,00,02,02,00,02,02,02,00,01,02,02,00,03,02,02,00,00,01
+		!byte 02,00,02,01,02,00,01,01,02,00
+
+TABDEC		; $96 bytes (150) inutilisés entre TABDEC ET FTABDEC d'où l'idée de reprendre une partie de la table FONC !	
+		!byte 03,01,02,00,00,03,02,00,02,03,02,00,01,03,02,00,03,03,02,00,00,00								; 22
+		!byte 01,00,02,00,01,00,01,00,01,00,03,00,01,00,00,02,01,00,02,02,01,00,01,02,01,00,03,02,01,00,00,01 ; 32 
+		!byte 01,00,02,01,01,00,01,01,01,00,03,01,01,00,00,03,01,00,02,03,01,00,01,03,01,00,03,03,01,00,00,00 ; 32
+		!byte 03,00,02,00,03,00,01,00,03,00,03,00,03,00,00,02,03,00,02,02,03,00,01,02,03,00,03,02,03,00,00,01 ; 32
+		!byte 03,00,02,01,03,00,01,01,03,00,03,01,03,00,00,03,03,00,02,03,03,00,01,03,03,00,03,03,03,00,00,00 ; 32
+		; <--																											; = 150 !
+
+FTABDEC  		!byte $00,$04
+         		!byte $FC
+         		!byte $FC,$08,$0C
+         		!byte $FC,$10,$14,$18
+         		!byte $FC
+         		!byte $FC
+         		!byte $FC
+         		!byte $FC
+         		!byte $FC
+         		!byte $FC,$1C,$20
+         		!byte $FC
+         		!byte $FC
+         		!byte $FC,$24,$28,$2C,$30,$34
+         		!byte $FC
+         		!byte $FC,$38,$3C,$40,$44,$48,$4C
+         		!byte $FC,$50,$54,$58,$5C,$60,$64,$68
+         		!byte $FC
+         		!byte $FC
+         		!byte $FC
+         		!byte $FC
+         		!byte $FC
+         		!byte $FC
+         		!byte $FC
+         		!byte $FC
+         		!byte $FC
+         		!byte $FC
+         		!byte $FC,$6C
+         		!byte $FC,$70,$74,$78
+         		!byte $FC
+         		!byte $FC
+         		!byte $FC,$7C
+         		!byte $FC
+         		!byte $FC,$80,$84
+         		!byte $FC,$88,$8C,$90,$94,$98,$9C,$A0
+         		!byte $FC
+         		!byte $FC
+         		!byte $FC
+         		!byte $FC
+         		!byte $FC,$A4,$A8,$AC
+         		!byte $FC,$B0,$B4,$B8,$BC,$C0,$C4,$C8
+         		!byte $FC
+         		!byte $FC,$CC,$D0,$D4,$D8,$DC,$E0
+         		!byte $FC,$E4,$E8,$EC,$F0,$F4,$F8
+         		!byte $FC
+; =============================================================================
+EO_FLOADC

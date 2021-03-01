@@ -1,0 +1,115 @@
+; ACME 0.96.4
+; boot.a
+; boot0 (T0/S0) / boot1 (FLOAD) / boot2 (MAIN) 
+; 
+;
+;
+!cpu 6502
+!convtab "a2txti.bin"    ; incorporation table caractère APPLE II (normal) générale
+!sl "lbl_boot.txt"
+
+; include
+!source "floadc_lbl.a"
+
+    		*= $800 ; ORG = $800
+
+; =============================================================================
+; Constants
+MAIN        	= $D000
+; =============================================================================
+; ZERO PAGE individual
+OUT1	  = $10	; +$11
+OUT2        = $12   ; +$13
+Temp        = $FF
+; =============================================================================
+
+!byte 01 		; premier octet réservé : nb de secteur à charger lors du boot 0
+
+START
+!zone
+
+; quand on arrive là, le drive tourne, x = $60 (slot 6)
+
+            	; $801/$802/$803
+		JMP INIT			    
+            	    
+            	DEC OffHi			                                                              
+LOAD
+OffHi = * + 1
+		LDA #$FF			; offset (hi) dernier secteur pour lecture BOOT1 (FLOAD)
+		CMP #(>FLOAD-1) 	    	; on est au bout ? 
+		BEQ +
+		STA $27
+nSector = * + 1
+		LDA #04  			; n# du dernier sector à lire (ordre inverse) pour BOOT1 (FLOAD)
+		STA $3D
+		JMP $C65C			; lecture par la routine en ROM carte Disk II 
+					; le retour se fait par le JMP $801 en sortie de cette routine
+                    ; attention utilisation de $26,$27,$2B,$3C,$3D,$40,$41       
++	        	; Loading MAIN (with FLOAD)
+            	LDX #$00                
+            	STX FIRSTSEC              	; sector
+            	STX CURTRK
+            	STX BUFFER              	; buffer low = $00
+            	INX                     	; = 1
+            	STX TRACK_TO_REACH            ; track 
+            	LDA #>MAIN              	; 
+            	STA BUFFER+1            	; buffer high = $D00
+            	LDA #18          
+            	STA COUNT_TOTAL
+		LDA #$FF
+		STA State_Loader              
+            	JSR FLOAD               	; loading
+	
+            	JMP MAIN			; saut Boot 2. Voilà c'est fini !                                        
+
+INIT	    	JSR $FC58			; HOME (ROM)
+	
+		LDA #$FF
+        		STA $C403       		; activate MB 4c (IIc)
+        		STA $C404
+		
+		; Text
+		LDX #39
+-		LDA TEXT,X
+		STA $400,X
+		DEX
+		BPL -
+		; jingle
+		LDY #$D0
+-		BIT $C030
+		LDA #$09
+		JSR $FCA8
+		DEY
+		BNE -
+		LDX #02
+		STX Temp
+--		LDY #$D0
+-		BIT $C030
+MODJING		LDA #$07
+		JSR $FCA8
+		DEY
+		BNE -
+		LDA #$05
+		STA MODJING+1
+		DEC Temp
+		BNE --
+		; ----------
+
+		; Loading FLOAD (with DISK ROM)
+		LDA $C083
+		LDA $C083			; write/read to RAM bank2 (Langage Card)
+		LDA #$CE			; on écrit DEC nSector en $801 
+		STA $801			; pour que le JMP $801 en fin de routine
+		LDA #<nSector		; en $C605
+		STA $802			; fasse une boucle avec le code en $801
+		LDA #>nSector		;
+		STA $803
+            	LDX #$60                	; SLOT#6*$10
+		JMP LOAD                	; chargement FLOAD
+		
+; =================================================================================================
+;                          0000000000111111111122222222223333333333
+;                          0123456789012345678901234567890123456789
+TEXT 		!text "+         FRENCH TOUCH PRESENT         +",00
+EO_BOOT

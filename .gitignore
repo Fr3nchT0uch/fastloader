@@ -1,0 +1,8 @@
+*.cfg
+*.b
+Thumbs.db
+*.dsk
+*.woz
+lbl_*.txt
+cw.code-workspace
+build.bat

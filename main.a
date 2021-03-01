@@ -1,0 +1,1353 @@
+; ACME 0.96.4
+; 
+; [binary MAX Size: (16+16+12)*256 = 11264 bytes]
+;
+; 03/2021
+;
+; Code: GROUiK [FRENCH TOUCH]
+; GFX: Donut from Andy Sloane's works
+; Music: BFOX
+; 
+; v0.08
+;
+!cpu 6502
+!convtab "a2txt.bin" ; 
+!sl "lbl_main.txt"
+
+; include
+!source "floadc_lbl.a"
+
+           	*= $D000 ; ORG = $D000 (RAM Langage Card)
+
+; =============================================================================
+; SYSTEM/CONSTANT
+VERTBLANK		= $C019
+; =============================================================================
+; ZERO PAGE
+OUT1	  	= $10	; +$11
+OUT2        	= $12   	; +$13
+oldREGD		= $14
+CursorX		= $15
+CursorCount	= $16
+CursorChar	= $17
+
+; decompLZ4
+src1        	= $30   	; +$31
+src2        	= $32   	; +$33
+dest        	= $34   	; +$35
+lenL        	= $36
+lenH        	= $37
+token       	= $38
+
+Index_Loader	= $40	;
+TimeAH		= $41	;
+iTFrames		= $42
+CountLoader	= $43
+
+; USED by PLAYER PYM + INT [ZP $4B-$9C]	
+; -------------------------------------
+saveA       	= $4B
+saveY       	= $4C
+saveX       	= $4D
+Tick        	= $4E   	; +$4F
+
+nREG0		= $50
+vREG0		= $51
+dREG0		= $52	; +$53
+nREG1		= $54
+vREG1		= $55
+dREG1		= $56	; +$57
+nREG2		= $58
+vREG2		= $59
+dREG2		= $5A	; +$5B
+nREG3		= $5C
+vREG3		= $5D
+dREG3		= $5E	; +$5F
+nREG4		= $60
+vREG4		= $61 
+dREG4		= $62	; +$63
+nREG5		= $64
+vREG5		= $65 
+dREG5		= $66	; +$67
+nREG6		= $68
+vREG6		= $69
+dREG6		= $6A	; +$6B
+nREG7		= $6C
+vREG7		= $6D
+dREG7		= $6E	; +$6F
+nREG8		= $70
+vREG8		= $71
+dREG8		= $72	; +$73
+nREG9		= $74
+vREG9		= $75
+dREG9		= $76	; +$77
+nREGA		= $78
+vREGA		= $79 
+dREGA		= $7A	; +$7B
+nREGB		= $7C
+vREGB		= $7D 
+dREGB		= $7E	; +$7F
+nREGC		= $80
+vREGC		= $81 
+dREGC		= $82	; +$83
+nREGD		= $84
+vREGD		= $85
+dREGD		= $86	; +$87
+
+count1Pat   	= $88
+indexPat    	= $89
+
+iREG0       	= $8A
+iREG1       	= $8B
+iREG2       	= $8C
+iREG3       	= $8D
+iREG4       	= $8E
+iREG5       	= $8F
+iREG6       	= $90
+iREG7       	= $91
+iREG8       	= $92
+iREG9       	= $93
+iREGA       	= $94
+iREGB       	= $95
+iREGC       	= $96
+iREGD       	= $97
+
+bMark		= $98
+
+; =================================================================================================
+MAIN
+!zone
+           	; Music Loading
+            	LDA #$02
+            	STA TRACK_TO_REACH         		
+		LDA #00
+		STA BUFFER
+		STA FIRSTSEC 
+            	LDA #$40            		
+            	STA BUFFER+1        
+            	LDA #21
+            	STA COUNT_TOTAL     
+            	JSR FLOAD
+
+		LDA DRVOFF           		
+
+            	; decomp MUSIC
+            	LDA #<($4000+16)    		; (+16 => skip LZ4 header)
+            	STA src2
+            	LDA #>($4000+16)
+            	STA src2+1
+            	LDA #<($6000)
+            	STA dest            
+            	LDA #>($6000)
+            	STA dest+1
+            	JSR DECOMPLZ4
+
+		; inir some VAR
+		LDA #$20
+		STA CursorChar
+		LDA #00				
+		STA iTFrames
+		STA CursorCount 
+            	STA Tick
+            	STA Tick+1 
+		STA bMark
+		STA bChangeP
+
+; =================================================================================================
+Init_MB     	; init Mockingboard (SLOT#4)             
+!zone
+		STA OUT2
+		LDA #01
+		STA OUT1
+		LDA #$C4
+		STA OUT2+1
+		STA OUT1+1
+
+            	; init MB (6522/AY1) / (6522/AY2)
+            	LDA #$FF
+           	STA $C403          		
+            	STA $C483
+            	LDA #$07
+            	STA $C402          
+            	STA $C482
+            	; ---------
+            	; clean REGISTER AY1 / AY2
+            	LDA #$00
+            	STA $C400
+            	STA $C480
+            	LDA #$04
+            	STA $C400
+            	STA $C480
+            	; ---------
+		; init player
+            	LDA #PATTERNSIZE
+            	STA count1Pat
+            	LDA #00
+            	STA indexPat
+            	TAX                 	; = 0 - init with pattern 0
+            	JSR INIT_PATTERN
+; -------------------------------------
+Init_INT    	; init interrupt
+!zone       
+            	; IIe/IIc
+            	LDA #<INT_ROUT1
+            	STA $FFFE       
+            	LDA #>INT_ROUT1
+            	STA $FFFF
+	
+            	SEI                 	; inhib
+	
+            	; init INT - T1/6522/1 
+            	LDA #%01000000      	; T1 Continuous Interrupt (FREE MODE) / PB7 disabled / (T2 One Shot - don't care here)
+            	STA $C40B           	; Auxiliary Control Register
+
+            	LDA #%11000000      	; Enable Timer 1 (only)
+            	STA $C40E           	; Interrupt Enable Register
+
+		JMP SYNC
+; =================================================================================================
+;                          0000000000111111111122222222223333333333
+;                          0123456789012345678901234567890123456789
+TEXT0 		!text "Here is a demonstration of our new",00
+TEXT1		!text "FAST LOADER, which reads data from",00
+TEXT2		!text "disk at a decent speed...",00
+; =================================================================================================
+!align 255,00       ; align here to avoid syncloop crossing page 
+            	; PRECISE VBL detection - PAL/NTSC
+SYNC
+-           	LDA VERTBLANK         
+            	BMI -                       	; wait fin display courant                                            
+-           	LDA VERTBLANK         
+            	BPL -                       	; wait fin VBL courant 
+
+            	; Debut DISPLAY     
+            	LDA $EA                     	; 3
+
+           	; 20279
+-           	LDY #255
+            	JSR WAIT65                  	; 255*65 = 16575
+            	LDY #56      		; 56 (PAL) / 06 (NTSC)
+            	JSR WAIT65                	; 56*65 = 3640 (PAL)
+                                        	; = 20215
+
+            	LDY #00
+            	JSR WAIT57                  	; 57
+
+            	LDA VERTBLANK               	; 4 (lecture au 4ème cycle)
+            	BMI -                       	; 3
+                                        	; = 20215+57+4+3 = 20279
+            
+            	; ici synchro précise => DEBUT DISPLAY
+; -----------------------------------------------------------------
+; WARNING: DISPLAY detected (VERTBLANK <0) from cycle #52 of last line (#311) of VBL
+; so BMI not taken (LDA VERTBLANK occurs at cycle #51 of line 311)
+                                                                            ; 2 cycles already passed during DISPLAY (bmi not taken)          
+; line 311 / cycle 54
+;                                       
+            	NOP : NOP : NOP : NOP  : LDA $EA                        ; +11     
+;                                                                           ; = 65
+; line 0 (display) / cycle 0
+
+            	; on doit attendre 191+70+50=311 lignes pour revenir cycle 0 dernière ligne VBL (ou 261 si NTSC)
+            	LDY #255
+            	JSR WAIT65
+            	LDY #56                	; 255+56=311 (PAL) / 255+06=261 (NTSC)
+            	JSR WAIT65
+; =================================================================================================          
+            	; ici synchro précise => cycle 0 / last VBL line
+		; complete line + set int
+		;
+		;
+            	LDX #<(20280-2)			; PAL refresh rate/cycles 
+		LDY #>(20280-2)      
+            	STX $C404                   
+            	STY $C405                   	
+; ==================================================================================================
+INTROTEXT
+
+		LDX #00
+-		STX lenL			; tmp
+		LDA TableTextL,X
+		STA src1
+		LDA TableTextH,X
+		STA src1+1
+		LDA TableVML,X
+		STA dest
+		LDA TableVMH,X
+		STA dest+1
+		JSR SetText
+		LDA #$A0
+		STA (dest),Y
+		LDX lenL
+		INX
+		CPX #3
+		BNE -
+
+		STY CursorX
+		CLI			; blinking cursor only here (player desactivated) 
+
+		JSR WAITROUTINE
+
+		LDA #$2C
+		STA MODBLINK		; stop cursor blinking
+		LDA #$A0
+		STA (dest),Y		; erase cursor
+
+		LDA #<TEXT3
+		STA src1
+		LDA #>TEXT3
+		STA src1+1
+		LDA TableVML+3
+		STA dest
+		LDA TableVMH+3
+		STA dest+1
+		JSR SetText
+		LDA #$A0
+		STA (dest),Y
+
+		LDA DRVON			; drive on again
+
+		STY CursorX
+		SEI
+		LDA #$20
+		STA MODBLINK		; run cursor blinking again
+		LDA #$20
+		STA MODPLAYER		; player!
+
+		CLI			; Music!
+LOOP1		LDA bMark			; bmark1
+		BEQ LOOP1
+
+		LDA #00
+		STA bMark			; reinit
+		
+		SEI			
+		LDA #<INT_ROUT2
+            	STA $FFFE       
+            	LDA #>INT_ROUT2
+            	STA $FFFF
+		LDA #$D0
+		STA dest
+		LDA #$0B
+		STA dest+1
+		LDA #128+1		; 128 frames for the donut!
+		STA CountLoader
+		LDA #03
+		STA TRACK_TO_REACH		; track #3 for the first donut
+		STA Index_Loader		; from 3 to 0 
+
+LOOP2		DEC CountLoader
+		BEQ .end_reading
+         		LDA #08			; # of sectors for each donut
+		STA COUNT_TOTAL		; compteur principal (décrémenter à chaque lecture) 
+		LDX Index_Loader
+		BPL +			; all donuts (4) read from one track ?
+		LDX #03			; reinit 
+		INC TRACK_TO_REACH		; + next track
+
++		LDA TFIRSTSEC,X	
+            	STA FIRSTSEC
+		DEX
+		STX Index_Loader	 
+		LDA #00			
+		STA BUFFER  
+MODPAGE2		LDA #08			; first load => PAGE2
+		STA BUFFER+1
+		LDA MODPAGE2+1
+		EOR #($04XOR$08)
+		STA MODPAGE2+1
+
+LOOP2B		LDA $C405
+		CMP #$0A
+		BCC LOOP2B		;  A < $10 -> no more time to load one sector -> loop again
+		SEI	
+		JSR READ
+		CLI
+		LDA State_Loader
+		BPL LOOP2B
+
+		JMP LOOP2
+
+.end_reading	SEI
+		LDA DRVOFF
+		LDA #$2C
+		STA MODBLINK		; stop cursor blinking
+		LDA #<INT_ROUT1
+            	STA $FFFE       
+            	LDA #>INT_ROUT1
+            	STA $FFFF
+		CLI  
+		LDY #00
+		LDA #$A0
+-		STA $400,Y
+		STA $500,Y
+		STA $600,Y
+		STA $700,Y
+		DEY
+		BNE -
+		LDA $C054			; back to page1
+
+LOOP3		LDA bMark
+		BEQ LOOP3			; bmark2
+
+		LDA #00
+		STA bMark			; reinit
+
+ENDTEXT		
+		LDX #04
+-		STX lenL			; tmp
+		LDA TableTextL,X
+		STA src1
+		LDA TableTextH,X
+		STA src1+1
+		LDA TableVML,X
+		STA dest
+		LDA TableVMH,X
+		STA dest+1
+		JSR SetText
+		LDA #$A0
+		STA (dest),Y
+		LDX lenL
+		INX
+		CPX #07
+		BNE -
+
+		STY CursorX
+		LDA #$20
+		STA MODBLINK		; run cursor blinking again
+
+LOOP4		LDA bMark			; bmark3
+		BEQ LOOP4
+		LDA #$2C
+		STA MODPLAYER		; disable player!
+		STA MODBLINK		; disable blinking!
+		; clean REGISTER AY1 / AY2 => sound off
+            	LDA #$00
+            	STA $C400
+            	STA $C480
+            	LDA #$04
+            	STA $C400
+            	STA $C480
+            	; ---------
+		LDA #$A0
+		LDY #$00
+-		STA $400,Y
+		STA $500,Y
+		STA $600,Y
+		STA $700,Y
+		DEY
+		BNE -
+
+		SEI			; dirty way to reboot without stop INT ;)
+		JSR WAITROUTINE
+		LDX #8
+-		LDA DataReboot,X
+		STA $300,X
+		DEX
+		BPL -
+debug		JMP $300			; reboot/reload
+; =================================================================================================
+BlinkCursor
+!zone
+		INC CursorCount		;
+		LDA CursorCount
+		CMP #20
+		BCC +
+		LDA CursorChar
+		EOR #$80			; $20 <-> $A0
+		STA CursorChar
+		LDA #00
+		STA CursorCount
+		
++		LDY CursorX
+		LDA CursorChar
+		STA (dest),Y
+		RTS
+; =================================================================================================
+INT_ROUT1
+		STA saveA				; on sauve A                                
+		STX saveX			   	; on sauve X                                
+		STY saveY				; on sauve Y
+
+MODPLAYER		BIT PLAYER_PYM       	; music! (one tick)
+
+MODBLINK		JSR BlinkCursor
+
+		BIT $C404           	; int again (6522)
+		LDA saveA
+		LDY saveY
+		LDX saveX
+		RTI
+; =================================================================================================
+INT_ROUT2    
+!zone
+		; 2<->9 cycles (according to opcode when INT occured)
+            	; + 7 cycles (6502 INT Sequence)
+            	; = 9/16 cycles passed since INT occured!
+            	; --------------------------------------------------------------------
+
+            	STA saveA				; on sauve A                                
+		STX saveX			   	; on sauve X                                
+		STY saveY				; on sauve Y
+
+		LDA bChangeP
+		BEQ +
+		; display TRACK #
+		LDY #$24
+		LDA #'T'
+		STA (dest),Y
+		INY
+		LDA #'$'
+		STA (dest),Y
+		INY
+		LDA TRACK_TO_REACH		; get current TRACK# 
+		STA token			; save
+		LSR
+		LSR 
+		LSR
+		LSR
+		TAX
+		LDA THexa,X
+		STA (dest),Y
+		INY
+		LDA token
+		AND #$0F
+		TAX
+		LDA THexa,X
+		STA (dest),Y
+		LDA dest+1
+		EOR #($04XOR$08)
+		STA dest+1
+		; --------------
+MODPAGE		BIT $C055
+		LDA MODPAGE+1
+		EOR #($54XOR$55)
+		STA MODPAGE+1
+		LDA #00
+		STA bChangeP
+            		
++		JSR PLAYER_PYM       	; music! (one tick)
+		           	
+		LDA State_Loader
+		BNE +
+		; State_Loader = $00 -> Go to NEXT TRACK
+		JSR NEXT_TRACK
++		
+		BIT $C404           	; int again (6522)
+		LDA saveA
+		LDY saveY
+		LDX saveX
+		RTI
+; =================================================================================================
+PLAYER_PYM	; alt L/R AY version				
+!zone
+
+		LDA OUT2			; switch l/r
+		EOR #$80
+		STA OUT2
+		TAX
+		INX
+		STX OUT1
+
+.r0		; REGISTER 0
+		LDY #00
+		LDA #$00
+		STA (OUT1),Y		; reg#				
+		LDA #$07			; Set fct "Set PSG Reg #"
+		STA (OUT2),Y		; ORB1 (fct)
+		LDA #$04			; Set fct "Inactive"
+		STA (OUT2),Y		; ORB1 (fct)
+
+		LDA vREG0			; reg value
+		STA (OUT1),Y		; ORA1 (data)
+		LDA #$06			; Set fct "Write DATA"
+		STA (OUT2),Y		; ORB1 (fct)
+		LDA #$04			; Set fct "Inactive"
+		STA (OUT2),Y		; ORB1 (fct)
+
+		
+		DEC nREG0
+		BNE .r1
+        		LDY iREG0
+        		LDA (dREG0),Y
+		STA nREG0
+		INY
+		LDA (dREG0),Y
+		STA vREG0
+		INY
+        		STY iREG0
+        
+.r1		; REGISTER 1
+		LDY #00
+		LDA #$01				
+		STA (OUT1),Y		; reg#				
+		LDA #$07			; Set fct "Set PSG Reg #"
+		STA (OUT2),Y		; ORB1 (fct)
+		LDA #$04			; Set fct "Inactive"
+		STA (OUT2),Y		; ORB1 (fct)
+
+		LDA vREG1			; reg value
+		STA (OUT1),Y		; ORA1 (data)
+		LDA #$06			; Set fct "Write DATA"
+		STA (OUT2),Y		; ORB1 (fct)
+		LDA #$04			; Set fct "Inactive"
+		STA (OUT2),Y		; ORB1 (fct)
+		
+		DEC nREG1
+		BNE .r2
+        		LDY iREG1
+        		LDA (dREG1),Y
+		STA nREG1
+		INY
+		LDA (dREG1),Y
+		STA vREG1
+		INY
+        		STY iREG1
+		
+.r2		; REGISTER 2
+		LDY #00
+		LDA #$02				
+		STA (OUT1),Y		; reg#				
+		LDA #$07			; Set fct "Set PSG Reg #"
+		STA (OUT2),Y		; ORB1 (fct)
+		LDA #$04			; Set fct "Inactive"
+		STA (OUT2),Y		; ORB1 (fct)
+
+		LDA vREG2			; reg value
+		STA (OUT1),Y		; ORA1 (data)
+		LDA #$06			; Set fct "Write DATA"
+		STA (OUT2),Y		; ORB1 (fct)
+		LDA #$04			; Set fct "Inactive"
+		STA (OUT2),Y		; ORB1 (fct)
+		
+        		DEC nREG2
+		BNE .r3
+        		LDY iREG2
+        		LDA (dREG2),Y
+		STA nREG2
+		INY
+		LDA (dREG2),Y
+		STA vREG2
+		INY
+        		STY iREG2
+
+.r3		; REGISTER 3
+		LDY #00
+		LDA #$03				
+		STA (OUT1),Y		; reg#				
+		LDA #$07			; Set fct "Set PSG Reg #"
+		STA (OUT2),Y		; ORB1 (fct)
+		LDA #$04			; Set fct "Inactive"
+		STA (OUT2),Y		; ORB1 (fct)
+
+		LDA vREG3			; reg value
+		STA (OUT1),Y		; ORA1 (data)
+		LDA #$06			; Set fct "Write DATA"
+		STA (OUT2),Y		; ORB1 (fct)
+		LDA #$04			; Set fct "Inactive"
+		STA (OUT2),Y		; ORB1 (fct)
+		
+        		DEC nREG3
+		BNE .r4
+        		LDY iREG3
+        		LDA (dREG3),Y
+		STA nREG3
+		INY
+		LDA (dREG3),Y
+		STA vREG3
+		INY
+        		STY iREG3
+
+.r4		; REGISTER 4
+		LDY #00
+		LDA #04				
+		STA (OUT1),Y		; reg#				
+		LDA #$07			; Set fct "Set PSG Reg #"
+		STA (OUT2),Y		; ORB1 (fct)
+		LDA #$04			; Set fct "Inactive"
+		STA (OUT2),Y		; ORB1 (fct)
+
+		LDA vREG4			; reg value
+		STA (OUT1),Y		; ORA1 (data)
+		LDA #$06			; Set fct "Write DATA"
+		STA (OUT2),Y		; ORB1 (fct)
+		LDA #$04			; Set fct "Inactive"
+		STA (OUT2),Y		; ORB1 (fct)
+		
+        		DEC nREG4
+		BNE .r5
+        		LDY iREG4
+        		LDA (dREG4),Y
+		STA nREG4
+		INY
+		LDA (dREG4),Y
+		STA vREG4
+		INY
+        		STY iREG4
+
+.r5		; REGISTER 5
+		LDY #00
+		LDA #$05				
+		STA (OUT1),Y		; reg#				
+		LDA #$07			; Set fct "Set PSG Reg #"
+		STA (OUT2),Y		; ORB1 (fct)
+		LDA #$04			; Set fct "Inactive"
+		STA (OUT2),Y		; ORB1 (fct)
+
+		LDA vREG5			; reg value
+		STA (OUT1),Y		; ORA1 (data)
+		LDA #$06			; Set fct "Write DATA"
+		STA (OUT2),Y		; ORB1 (fct)
+		LDA #$04			; Set fct "Inactive"
+		STA (OUT2),Y		; ORB1 (fct)
+		
+        		DEC nREG5
+		BNE .r6
+        		LDY iREG5
+        		LDA (dREG5),Y
+		STA nREG5
+		INY
+		LDA (dREG5),Y
+		STA vREG5
+		INY
+        		STY iREG5
+
+.r6		; REGISTER 6
+		LDY #00
+		LDA #$06				
+		STA (OUT1),Y		; reg#				
+		LDA #$07			; Set fct "Set PSG Reg #"
+		STA (OUT2),Y		; ORB1 (fct)
+		LDA #$04			; Set fct "Inactive"
+		STA (OUT2),Y		; ORB1 (fct)
+
+		LDA vREG5			; reg value
+		STA (OUT1),Y		; ORA1 (data)
+		LDA #$06			; Set fct "Write DATA"
+		STA (OUT2),Y		; ORB1 (fct)
+		LDA #$04			; Set fct "Inactive"
+		STA (OUT2),Y		; ORB1 (fct)
+		
+        		DEC nREG6
+		BNE .r7
+        		LDY iREG6
+        		LDA (dREG6),Y
+		STA nREG6
+		INY
+		LDA (dREG6),Y
+		STA vREG6
+		INY
+        		STY iREG6
+
+.r7		; REGISTER 7
+		LDY #00
+		LDA #$07				
+		STA (OUT1),Y		; reg#				
+		LDA #$07			; Set fct "Set PSG Reg #"
+		STA (OUT2),Y		; ORB1 (fct)
+		LDA #$04			; Set fct "Inactive"
+		STA (OUT2),Y		; ORB1 (fct)
+
+		LDA vREG7			; reg value
+		STA (OUT1),Y		; ORA1 (data)
+		LDA #$06			; Set fct "Write DATA"
+		STA (OUT2),Y		; ORB1 (fct)
+		LDA #$04			; Set fct "Inactive"
+		STA (OUT2),Y		; ORB1 (fct)
+		
+        		DEC nREG7
+		BNE .r8
+        		LDY iREG7
+        		LDA (dREG7),Y
+		STA nREG7
+		INY
+		LDA (dREG7),Y
+		STA vREG7
+		INY
+        		STY iREG7
+
+.r8		; REGISTER 8
+		LDY #00
+		LDA #$08
+		STA (OUT1),Y		; reg#				
+		LDA #$07			; Set fct "Set PSG Reg #"
+		STA (OUT2),Y		; ORB1 (fct)
+		LDA #$04			; Set fct "Inactive"
+		STA (OUT2),Y		; ORB1 (fct)
+
+		LDA vREG8			; reg value
+		STA (OUT1),Y		; ORA1 (data)
+		LDA #$06			; Set fct "Write DATA"
+		STA (OUT2),Y		; ORB1 (fct)
+		LDA #$04			; Set fct "Inactive"
+		STA (OUT2),Y		; ORB1 (fct)
+		
+        		DEC nREG8
+		BNE .r9
+        		LDY iREG8
+        		LDA (dREG8),Y
+		STA nREG8
+		INY
+		LDA (dREG8),Y
+		STA vREG8
+		INY
+        		STY iREG8
+
+.r9		; REGISTER 9
+		LDY #00
+		LDA #$09				
+		STA (OUT1),Y		; reg#				
+		LDA #$07			; Set fct "Set PSG Reg #"
+		STA (OUT2),Y		; ORB1 (fct)
+		LDA #$04			; Set fct "Inactive"
+		STA (OUT2),Y		; ORB1 (fct)
+
+		LDA vREG9			; reg value
+		STA (OUT1),Y		; ORA1 (data)
+		LDA #$06			; Set fct "Write DATA"
+		STA (OUT2),Y		; ORB1 (fct)
+		LDA #$04			; Set fct "Inactive"
+		STA (OUT2),Y		; ORB1 (fct)
+			
+        		DEC nREG9
+		BNE .ra
+        		LDY iREG9
+        		LDA (dREG9),Y
+		STA nREG9
+		INY
+		LDA (dREG9),Y
+		STA vREG9
+		INY
+        		STY iREG9
+
+.ra		; REGISTER 10
+		LDY #00
+		LDA #$0A
+		STA (OUT1),Y		; reg#				
+		LDA #$07			; Set fct "Set PSG Reg #"
+		STA (OUT2),Y		; ORB1 (fct)
+		LDA #$04			; Set fct "Inactive"
+		STA (OUT2),Y		; ORB1 (fct)
+
+		LDA vREGA			; reg value
+		STA (OUT1),Y		; ORA1 (data)
+		LDA #$06			; Set fct "Write DATA"
+		STA (OUT2),Y		; ORB1 (fct)
+		LDA #$04			; Set fct "Inactive"
+		STA (OUT2),Y		; ORB1 (fct)
+		
+        		DEC nREGA
+		BNE .rb
+        		LDY iREGA
+        		LDA (dREGA),Y
+		STA nREGA
+		INY
+		LDA (dREGA),Y
+		STA vREGA
+		INY
+        		STY iREGA
+
+.rb		; REGISTER 11
+		LDY #00
+		LDA #$0B				
+		STA (OUT1),Y		; reg#				
+		LDA #$07			; Set fct "Set PSG Reg #"
+		STA (OUT2),Y		; ORB1 (fct)
+		LDA #$04			; Set fct "Inactive"
+		STA (OUT2),Y		; ORB1 (fct)
+
+		LDA vREGB			; reg value
+		STA (OUT1),Y		; ORA1 (data)
+		LDA #$06			; Set fct "Write DATA"
+		STA (OUT2),Y		; ORB1 (fct)
+		LDA #$04			; Set fct "Inactive"
+		STA (OUT2),Y		; ORB1 (fct)
+		
+        		DEC nREGB
+		BNE .rc
+        		LDY iREGB
+        		LDA (dREGB),Y
+		STA nREGB
+		INY
+		LDA (dREGB),Y
+		STA vREGB
+		INY
+        		STY iREGB
+
+.rc		; REGISTER 12
+		LDY #00
+		LDA #$0C				
+		STA (OUT1),Y		; reg#				
+		LDA #$07			; Set fct "Set PSG Reg #"
+		STA (OUT2),Y		; ORB1 (fct)
+		LDA #$04			; Set fct "Inactive"
+		STA (OUT2),Y		; ORB1 (fct)
+
+		LDA vREGC			; reg value
+		STA (OUT1),Y		; ORA1 (data)
+		LDA #$06			; Set fct "Write DATA"
+		STA (OUT2),Y		; ORB1 (fct)
+		LDA #$04			; Set fct "Inactive"
+		STA (OUT2),Y		; ORB1 (fct)
+		
+        		DEC nREGC
+		BNE .rd
+        		LDY iREGC
+        		LDA (dREGC),Y
+		STA nREGC
+		INY
+		LDA (dREGC),Y
+		STA vREGC
+		INY
+        		STY iREGC
+
+.rd		; REGISTER 13	; skip if = $FF (warning 2 AY!)
+		LDA vREGD
+		TAY
+		BPL +			; if not $FF play it 
+		LDA oldREGD		; if $FF check previous value
+		BMI .rdb			; if $FF too, skip
+		LDY #$FF			; else $FF is new oldREGD
+
++		STY oldREGD		; save oldREGD
+		TAX			; save vREGD		
+		LDY #00
+		LDA #$0D				
+		STA (OUT1),Y		; reg#				
+		LDA #$07			; Set fct "Set PSG Reg #"
+		STA (OUT2),Y		; ORB1 (fct)
+		LDA #$04			; Set fct "Inactive"
+		STA (OUT2),Y		; ORB1 (fct)
+
+		TXA			; reg value
+		STA (OUT1),Y		; ORA1 (data)
+		LDA #$06			; Set fct "Write DATA"
+		STA (OUT2),Y		; ORB1 (fct)
+		LDA #$04			; Set fct "Inactive"
+		STA (OUT2),Y		; ORB1 (fct)
+		
+.rdb		DEC nREGD
+		BNE .checkpattern
+        		LDY iREGD
+        		LDA (dREGD),Y
+		STA nREGD
+		INY
+		LDA (dREGD),Y
+		STA vREGD
+		INY
+        		STY iREGD
+		
+.checkpattern
+        		DEC count1Pat		       	; end of ONE pattern ?
+        		BEQ ++               		; if yes, next pattern!
+.end		INC Tick           			; inc frame counter                                             
+            	BNE +
+		INC Tick+1                                                                          
++           	LDA Tick+1
+		LDX iTFrames
+            	CMP THFrames,X
+            	BNE .quit
+            	LDA Tick
+            	CMP TLFrames,X
+            	BNE .quit
+		INC bMark				; = 1
+		INC iTFrames
+.quit		RTS
+
+++       		; next pattern
+		LDA #PATTERNSIZE
+        		STA count1Pat
+        		INC indexPat
+        		LDX indexPat
+
+INIT_PATTERN
+        		; init pattern
+        		LDA D_REG0,X
+        		STA dREG0
+        		LDA D_REG0+NBPATTERNS,X
+        		STA dREG0+1
+        		LDY #00
+        		LDA (dREG0),Y
+		STA nREG0
+		INY
+		LDA (dREG0),Y
+		STA vREG0
+		INY
+        		STY iREG0
+        		LDA D_REG1,X
+        		STA dREG1
+        		LDA D_REG1+NBPATTERNS,X
+        		STA dREG1+1
+        		LDY #00
+        		LDA (dREG1),Y
+		STA nREG1
+		INY
+		LDA (dREG1),Y
+		STA vREG1
+		INY
+        		STY iREG1
+        		LDA D_REG2,X
+        		STA dREG2
+        		LDA D_REG2+NBPATTERNS,X
+        		STA dREG2+1
+        		LDY #00
+        		LDA (dREG2),Y
+		STA nREG2
+		INY
+		LDA (dREG2),Y
+		STA vREG2
+		INY
+        		STY iREG2
+        		LDA D_REG3,X
+        		STA dREG3
+        		LDA D_REG3+NBPATTERNS,X
+        		STA dREG3+1
+        		LDY #00
+        		LDA (dREG3),Y
+		STA nREG3
+		INY
+		LDA (dREG3),Y
+		STA vREG3
+		INY
+        		STY iREG3
+        		LDA D_REG4,X
+        		STA dREG4
+        		LDA D_REG4+NBPATTERNS,X
+        		STA dREG4+1
+        		LDY #00
+        		LDA (dREG4),Y
+		STA nREG4
+		INY
+		LDA (dREG4),Y
+		STA vREG4
+		INY
+        		STY iREG4
+        		LDA D_REG5,X
+        		STA dREG5
+        		LDA D_REG5+NBPATTERNS,X
+        		STA dREG5+1
+        		LDY #00
+        		LDA (dREG5),Y
+		STA nREG5
+		INY
+		LDA (dREG5),Y
+		STA vREG5
+		INY
+        		STY iREG5
+        		LDA D_REG6,X
+        		STA dREG6
+        		LDA D_REG6+NBPATTERNS,X
+        		STA dREG6+1
+        		LDY #00
+        		LDA (dREG6),Y
+		STA nREG6
+		INY
+		LDA (dREG6),Y
+		STA vREG6
+		INY
+        		STY iREG6
+        		LDA D_REG7,X
+        		STA dREG7
+        		LDA D_REG7+NBPATTERNS,X
+        		STA dREG7+1
+        		LDY #00
+        		LDA (dREG7),Y
+		STA nREG7
+		INY
+		LDA (dREG7),Y
+		STA vREG7
+		INY
+        		STY iREG7
+        		LDA D_REG8,X
+        		STA dREG8
+        		LDA D_REG8+NBPATTERNS,X
+        		STA dREG8+1
+        		LDY #00
+        		LDA (dREG8),Y
+		STA nREG8
+		INY
+		LDA (dREG8),Y
+		STA vREG8
+		INY
+        		STY iREG8
+        		LDA D_REG9,X
+        		STA dREG9
+        		LDA D_REG9+NBPATTERNS,X
+        		STA dREG9+1
+        		LDY #00
+        		LDA (dREG9),Y
+		STA nREG9
+		INY
+		LDA (dREG9),Y
+		STA vREG9
+		INY
+        		STY iREG9
+        		LDA D_REGA,X
+        		STA dREGA
+        		LDA D_REGA+NBPATTERNS,X
+        		STA dREGA+1
+        		LDY #00
+        		LDA (dREGA),Y
+		STA nREGA
+		INY
+		LDA (dREGA),Y
+		STA vREGA
+		INY
+        		STY iREGA
+        		LDA D_REGB,X
+        		STA dREGB
+        		LDA D_REGB+NBPATTERNS,X
+        		STA dREGB+1
+        		LDY #00
+        		LDA (dREGB),Y
+		STA nREGB
+		INY
+		LDA (dREGB),Y
+		STA vREGB
+		INY
+        		STY iREGB
+        		LDA D_REGC,X
+        		STA dREGC
+        		LDA D_REGC+NBPATTERNS,X
+        		STA dREGC+1
+        		LDY #00
+        		LDA (dREGC),Y
+		STA nREGC
+		INY
+		LDA (dREGC),Y
+		STA vREGC
+		INY
+        		STY iREGC
+        		LDA D_REGD,X
+        		STA dREGD
+        		LDA D_REGD+NBPATTERNS,X
+        		STA dREGD+1
+        		LDY #00
+        		LDA (dREGD),Y
+		STA nREGD
+		INY
+		LDA (dREGD),Y
+		STA vREGD
+		STA oldREGD
+        		INY
+        		STY iREGD
+		JMP .end
+        		RTS
+; =============================================================================
+DECOMPLZ4
+!zone
+; routine de décompression LZ4
+; code: XXL and FOX (from Atari Scene)
+; small modification: FT
+
+; init routine
+		LDY #0
+		STY lenH
+		STY lenL	
+; -------------------------------------
+; décomp LZ4 routine
+; -------------------------------------
+.BP
+          	jsr .GET_BYTE                  
+                  	sta token
+               	lsr
+               	lsr
+               	lsr
+               	lsr
+                  	beq .read_offset                     ; there is no literal
+                  	cmp #$0f
+                  	jsr .getLength
+                  	
+.b_literals         jsr .GET_BYTE
+                  	jsr .store
+                  	bne .b_literals
+                  	
+.read_offset       	jsr .GET_BYTE
+                  	tax
+                  	sec
+                  	eor #$ff
+                  	adc dest
+                  	sta src1
+                  	txa
+                  	php							
+                  	jsr .GET_BYTE
+                  	plp
+                  	bne .not_done
+                  	tax
+                  	beq .unlz4_done
+.not_done          	eor #$ff
+                  	adc dest+1
+                  	sta src1+1
+                  	; c=1
+		lda token
+                  	and #$0f
+                  	adc #$03                            ; 3+1=4
+                  	cmp #$13
+                  	jsr .getLength
+
+.b1                 
+                    lda (src1),Y
+          
+                  	INC src1
+                  	BNE .s1
+                  	INC src1+1
+.s1                 jsr .store
+                  	bne .b1
+                  	jmp.BP                  
+
+.store             	sta (dest),Y
+                  	INC dest
+                  	BNE .s2
+ 		INC dest+1                 	
+.s2                 dec lenL
+                  	bne .unlz4_done
+                  	dec lenH
+.unlz4_done        	rts
+
+.getLength_next    	jsr .GET_BYTE
+                  	tax
+                  	clc
+	          adc lenL
+                  	bcc .s3
+                  	inc lenH
+.s3   	          inx
+
+.getLength         	sta lenL
+                  	beq .getLength_next
+                  	tax
+                  	beq .s4
+                  	inc lenH
+.s4 	          rts
+
+		
+.GET_BYTE		LDA (src2),Y
+		INC src2		
+		BEQ .s5
+		RTS					
+.s5		INC src2+1			
+		RTS
+; =================================================================================================
+SetText
+!zone
+		LDY #00
+--		LDA (src1),Y
+		CMP #$00
+		BEQ +
+		STA (dest),Y
+		LDA #$20
+		INY
+		STA (dest),Y
+		STY token 	; save (tmp var)
+		BIT $C030
+		LDA #%00111111
+-		PHA
+		JSR WAIT65
+		PLA
+		ROR
+		BCS -
+		LDY token		; restore	(tmp var)
+		JMP --
++		RTS
+; =================================================================================================
+TableTextL	!byte <TEXT0, <TEXT1, <TEXT2, <TEXT3, <TEXT4, <TEXT5, <TEXT6
+TableTextH	!byte >TEXT0, >TEXT1, >TEXT2, >TEXT3, >TEXT4, >TEXT5, >TEXT6
+TableVML		!byte $2B,$2B,$2B,$AE,$51,$51,$51
+TableVMH		!byte $04,$05,$06,$07,$07,$06,$05
+
+NBPATTERNS 	= 32           ; MAX 255
+PATTERNSIZE 	= 96           ; MAX 128
+PATLOOP      	= 0
+
+D_REG0 = $6000
+D_REG1 = $66E2
+D_REG2 = $6724
+D_REG3 = $6BBC
+D_REG4 = $6C98
+D_REG5 = $7310
+D_REG6 = $74E2
+D_REG7 = $75D2
+D_REG8 = $786E
+D_REG9 = $7EB2
+D_REGA = $8410
+D_REGB = $88F2
+D_REGC = $89C8
+D_REGD = $8A0A
+
+; FRAMEMAX     	= 3072
+TLFrames		!byte <358, <2328, <3072 
+THFrames		!byte >358, >2328, >3072
+
+THexa		!TEXT "0123456789ABCDEF"
+TFIRSTSEC 	!byte  $18,$10,$08,$00
+; =================================================================================================
+!align 255,0
+WAIT65              ; = attend Y * 65 cycles exactement (JSR/RTS compris -> APPEL EN 8 cycles obligatoire -> LDY #xx / JSR WAIT65)
+WAIT65ZP = * + 1    ; = attend Y * 65 cycles exactement (JSR/RTS compris -> APPEL EN 9 cycles obligatoire -> LDY ZP / JSR WAIT65Z)
+!zone           
+		LDA $EA     ; 3 (dummy)  -> on arrive sur NOP si JSR WAIT65Z
+WAIT62      	; = attend 1*62 cycles exactement (JSR/RTS compris -> LDY #01 / JSR WAIT63)
+            	DEY			; 2					
+		BEQ .S1	    ; 3/2			
+                  
+.WL1 	    	LDX #$0B				            
+.WL2 	    	DEX							
+		BNE .WL2	; 2 + (2+3)*10 + 2 + 2 = 56															
+                      
+		NOP			; 2					
+		NOP			; 2					
+		DEY			; 2					
+		BNE .WL1	; (56+2+2+2+3)*(Y-2) + 56 + 2 + 2 + 2 + 2 = 65*Y - 2*65 + 64 = 65*Y - 66				
+
+WAIT59      	; = attend 1*59 cycles exactement (JSR/RTS compris -> LDY #xx / JSR WAIT59)											                      
+		LDX #$08					
+.WL3 	    	DEX							
+		BNE .WL3	; 2 + (2+3)*7 + 2 + 2 = 41					
+                							
+		NOP			; 2					
+		NOP			; 2					
+		RTS			; 6
+
+                    ; WAIT62 = 2 + 2 + (65-66) + 41 + 2 + 2 + 6 + (8) = 62 
+                    ; WAIT65 = 3 + 2 + 2 + (65*Y-66) + 41 + 2 + 2 + 6 + (8) = 65*Y
+                    ; WAIT59 = 41 + 2 + 2 + 6 + (8) = 59 					
+
+WAIT57      	; = attend 1*57 cycles exactement (JSR/RTS compris -> LDY #xx / JSR WAIT57)											         
+.S1		NOP         ; 2
+WAIT55      	; = attend 1*55 cycles exactement (JSR/RTS compris -> LDY #xx / JSR WAIT55)	
+            	LDX #08					
+                      
+.WL4 	    	DEX							
+		BNE .WL4    ; 2 + (2+3)*7 + 2 + 2 = 41					
+		RTS         ; 6
+                    ; = 49
+
+                    ; WAIT65 = 3 + 2 + 3 + 49 + (8) = 65
+                    ; WAIT62 = 2 + 3 + 49 + (8) = 62
+                    ; WAIT57 = 49 + (8) = 57
+                    ; WAIT55 = 47 + (8) = 55	
+; =================================================================================================
+WAITROUTINE
+		LDX #15
+		; wait routine (from A2 ROM/$FCA8)
+---		LDA #$FF
+		SEC
+--		PHA
+-		SBC #01
+		BNE -
+		PLA
+		SBC #01
+		BNE --
+		; ---
+		DEX
+		BNE ---
+		RTS
+; =================================================================================================
+;                          0000000000111111111122222222223333333333
+;                          0123456789012345678901234567890123456789
+TEXT3		!text "... while music is playing",00
+TEXT4		!text "CODE...............GROUiK/FRENCH TOUCH",00
+TEXT5		!text "GFX...grabbed from ANDY SLOANE's works",00
+TEXT6		!text "MUSIC.............................BFOX",00
+DataReboot	!byte $AD,$81,$C0,$AD,$81,$C0,$4C,$00,$C6
+; =================================================================================================
+EO_MAIN
