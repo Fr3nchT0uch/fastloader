@@ -28,15 +28,15 @@ all: $(DISKWOZ)
 
 $(DISKWOZ): floadc.b boot.b main.b data
 
-	$(GENWOZ)  -v -t "0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1" >loggenwoz.txt
+	$(GENWOZ)  -v -t "0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1"
 # boot 		T0 S0 	> $800 (M)
 	$(W2W) s p 0 0 $(DISKWOZ) boot.b
 # fload 		T0 S1	> $FC00 (LC)
 	$(W2W) s p 0 1 $(DISKWOZ) floadc.b
 # main.b 		T1 S0 	> $D000 (LC)
-	$(W2W) c p 1 0 $(DISKWOZ) main.b >logmain.txt
+	$(W2W) c p 1 0 $(DISKWOZ) main.b
 # music		T2 S0	> $4000 (M) * >> $6000 (M)
-	$(W2W) c p 2 0 $(DISKWOZ) music\ZICDECOMP.lz4 >logzic.txt
+	$(W2W) c p 2 0 $(DISKWOZ) music\ZICDECOMP.lz4
 
 # DONUT		T3+ S0+ 
 	$(W2W) c p 3 0 $(DISKWOZ) DONUT\donut.bin

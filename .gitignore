@@ -6,3 +6,4 @@ Thumbs.db
 lbl_*.txt
 cw.code-workspace
 build.bat
+log*.txt
