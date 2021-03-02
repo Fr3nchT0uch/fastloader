@@ -28,7 +28,7 @@ all: $(DISKWOZ)
 
 $(DISKWOZ): floadc.b boot.b main.b data
 
-	$(GENWOZ)  -v -t "0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1"
+	$(GENWOZ)  -t "0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1"
 # boot 		T0 S0 	> $800 (M)
 	$(W2W) s p 0 0 $(DISKWOZ) boot.b
 # fload 		T0 S1	> $FC00 (LC)
