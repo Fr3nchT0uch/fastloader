@@ -2,6 +2,7 @@
 ; 
 ; [binary MAX Size: (16+16+12)*256 = 11264 bytes]
 ;
+; 'DONUT': Fast Loader demonstration!
 ; 03/2021
 ;
 ; Code: GROUiK [FRENCH TOUCH]
@@ -11,7 +12,8 @@
 ; v0.08
 ;
 !cpu 6502
-!convtab "a2txt.bin" ; 
+!convtab "a2txt.bin" ;
+ 
 !sl "lbl_main.txt"
 
 ; include

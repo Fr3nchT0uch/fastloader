@@ -6,7 +6,9 @@ Load data at a decent speed while musing is playing
 v0.8 - 03/2021  
    
 **Code:** GROUiK
+
 **GFX:** Donut's data from Andy Sloane's works
+
 **Music:** BFOX
 
 
@@ -33,5 +35,5 @@ You'll need the following tools:
 - ACME Cross-Assembler (https://sourceforge.net/projects/acme-crossass/)
 - Apple Commander (https://applecommander.github.io/)
 - make
-- GenWoz (https://)
-- Write2Woz (https://)
+- GenWoz (https://github.com/Fr3nchT0uch/genwoz)
+- Write2Woz (https://github.com/Fr3nchT0uch/writetowoz)

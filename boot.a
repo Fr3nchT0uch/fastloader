@@ -1,11 +1,10 @@
 ; ACME 0.96.4
-; boot.a
-; boot0 (T0/S0) / boot1 (FLOAD) / boot2 (MAIN) 
 ; 
 ;
 ;
 !cpu 6502
 !convtab "a2txti.bin"    ; incorporation table caractère APPLE II (normal) générale
+
 !sl "lbl_boot.txt"
 
 ; include

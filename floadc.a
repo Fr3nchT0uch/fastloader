@@ -13,8 +13,6 @@
 ; Code: GROUiK/FRENCH TOUCH 
 ; License: GPL 3
 ;
-; 
-;
 !cpu 6502
 !convtab "a2txt.bin" ; 
 
