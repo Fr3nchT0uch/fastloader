@@ -22,12 +22,12 @@ OUT2        = $12   ; +$13
 Temp        = $FF
 ; =============================================================================
 
-!byte 01 		; premier octet réservé : nb de secteur à charger lors du boot 0
+!byte 01 		; RESERVED: number of sectors loaded by BOOT0 (hardware)
 
 START
 !zone
 
-; quand on arrive là, le drive tourne, x = $60 (slot 6)
+		; x = $60 (slot #6)
 
             	; $801/$802/$803
 		JMP INIT			    
@@ -35,16 +35,16 @@ START
             	DEC OffHi			                                                              
 LOAD
 OffHi = * + 1
-		LDA #$FF			; offset (hi) dernier secteur pour lecture BOOT1 (FLOAD)
-		CMP #(>FLOAD-1) 	    	; on est au bout ? 
+		LDA #$FF			; offset (hi) last sector BOOT1 (FLOAD)
+		CMP #(>FLOAD-1) 	    	; end ?
 		BEQ +
 		STA $27
 nSector = * + 1
-		LDA #04  			; n# du dernier sector à lire (ordre inverse) pour BOOT1 (FLOAD)
-		STA $3D
-		JMP $C65C			; lecture par la routine en ROM carte Disk II 
-					; le retour se fait par le JMP $801 en sortie de cette routine
-                    ; attention utilisation de $26,$27,$2B,$3C,$3D,$40,$41       
+		LDA #04  			; n# of the last sector to load (inverse order)
+		STA $3D		     
+		JMP $C65C			; using ROM carte Disk II routine to load sectors
+					; back to $801 at the end of the ROM routine
+					; warning: use of $26,$27,$2B,$3C,$3D,$40,$41  
 +	        	; Loading MAIN (with FLOAD)
             	LDX #$00                
             	STX FIRSTSEC              	; sector
@@ -60,7 +60,7 @@ nSector = * + 1
 		STA State_Loader              
             	JSR FLOAD               	; loading
 	
-            	JMP MAIN			; saut Boot 2. Voilà c'est fini !                                        
+            	JMP MAIN			; finished!                                       
 
 INIT	    	JSR $FC58			; HOME (ROM)
 	
@@ -74,7 +74,7 @@ INIT	    	JSR $FC58			; HOME (ROM)
 		STA $400,X
 		DEX
 		BPL -
-		; jingle
+		; jingle / Tribute to 'Déplombage Mode d'Emploi' / Godfather (code from DPME III)
 		LDY #$D0
 -		BIT $C030
 		LDA #$09
@@ -93,19 +93,19 @@ MODJING		LDA #$07
 		STA MODJING+1
 		DEC Temp
 		BNE --
-		; ----------
+		; ---------------------
 
 		; Loading FLOAD (with DISK ROM)
 		LDA $C083
 		LDA $C083			; write/read to RAM bank2 (Langage Card)
-		LDA #$CE			; on écrit DEC nSector en $801 
-		STA $801			; pour que le JMP $801 en fin de routine
-		LDA #<nSector		; en $C605
-		STA $802			; fasse une boucle avec le code en $801
-		LDA #>nSector		;
+		LDA #$CE			; $801 => DEC nSector
+		STA $801			
+		LDA #<nSector		
+		STA $802			
+		LDA #>nSector		
 		STA $803
             	LDX #$60                	; SLOT#6*$10
-		JMP LOAD                	; chargement FLOAD
+		JMP LOAD                	; loading 'FLOAD routine' 
 		
 ; =================================================================================================
 ;                          0000000000111111111122222222223333333333
