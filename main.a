@@ -9,7 +9,7 @@
 ; GFX: Donut from Andy Sloane's works
 ; Music: BFOX
 ; 
-; v0.08
+; v0.09 : "universal" (IIe/IIc) version with vblank sync (using floating bus)
 ;
 !cpu 6502
 !convtab "a2txt.bin" ;
@@ -213,53 +213,55 @@ Init_INT    	; init interrupt
 TEXT0 		!text "Here is a demonstration of our new",00
 TEXT1		!text "FAST LOADER, which reads data from",00
 TEXT2		!text "disk at a decent speed...",00
+TFIRSTSEC 	!byte  $18,$10,$08,$00
+; FRAMEMAX     	= 3072
+TLFrames		!byte <358, <2328, <3072 
+THFrames		!byte >358, >2328, >3072
 ; =================================================================================================
-!align 255,00       ; align here to avoid syncloop crossing page 
-            	; PRECISE VBL detection - PAL/NTSC
-SYNC
--           	LDA VERTBLANK         
-            	BMI -                       	; wait fin display courant                                            
--           	LDA VERTBLANK         
-            	BPL -                       	; wait fin VBL courant 
+!align 255,00       ; align here to avoid crossing page 
+SYNC            			
+!zone	
+		; wait until first line of TEXT (first 8 lines of display)
+		; detection of the floating bus must be > 25 cycles to avoid "false positive"
+						; pos =  (values "for" AppleWin -> data is read at first cycle of LDA!)				
+.L1		LDA $C051		; read $0A pos	; $A + 3 = $D
+		; WARNING: $C070 seems not to work with Apple IIc with MB4C - So using $C051 to read the floating bus
+		CMP #$06		; "F" (inverse)	; $E
+		BNE .L1				; $10
+		LDA ($AC,X)	; dummy		; $12
+		LDA ($AC,X)	; dummy		; $18
+		LDA ($AC,X)	; dummy		; $1E
+		LDA $AC		; dummy		; $24
+		LDA $C051		; read pos $27	; $27
+		CMP #$3A		; ":" (inverse)	; 		
+		BNE .L1				; 
 
-            	; Debut DISPLAY     
-            	LDA $EA                     	; 3
+		; waiting 65 cycles - 08 (already passed) = 57 to go to next line and read pos $12 again !
+debug
+		LDA token		; dummy				; + 3
+.L2								; = 11 cycles
+		LDX #$0A
+.WL1		DEX	
+		BNE .WL1						; + 51 cycles  
 
-           	; 20279
--           	LDY #255
-            	JSR WAIT65                  	; 255*65 = 16575
-            	LDY #56      		; 56 (PAL) / 06 (NTSC)
-            	JSR WAIT65                	; 56*65 = 3640 (PAL)
-                                        	; = 20215
+		LDA token		; dummy				; 3
+								; = 11 + 51 + 3 = 65
+				
+		LDA $C051		; read pos $27 again (for next lines)	; 4
+		CMP #$3A		; ":" inverse ?			; 2
+		BNE +						; 2 (/3)
+		JMP .L2						; 3  
+								; = 11 (we loop again until we don't get a ":" inverse)
 
-            	LDY #00
-            	JSR WAIT57                  	; 57
++		; here we are at the pos $27 of the 9th lines of display (first text "line" was passed)
+		; no need to do fine synchro so we wait 312 lines (PAL) - 11 lines to go to the penultimate lines of VBL
 
-            	LDA VERTBLANK               	; 4 (lecture au 4ème cycle)
-            	BMI -                       	; 3
-                                        	; = 20215+57+4+3 = 20279
-            
-            	; ici synchro précise => DEBUT DISPLAY
-; -----------------------------------------------------------------
-; WARNING: DISPLAY detected (VERTBLANK <0) from cycle #52 of last line (#311) of VBL
-; so BMI not taken (LDA VERTBLANK occurs at cycle #51 of line 311)
-                                                                            ; 2 cycles already passed during DISPLAY (bmi not taken)          
-; line 311 / cycle 54
-;                                       
-            	NOP : NOP : NOP : NOP  : LDA $EA                        ; +11     
-;                                                                           ; = 65
-; line 0 (display) / cycle 0
+		LDY #255
+            	JSR WAIT65                  	
+            	LDY #46      		
+            	JSR WAIT65                		; 46+255 = 301 lines 
 
-            	; on doit attendre 191+70+50=311 lignes pour revenir cycle 0 dernière ligne VBL (ou 261 si NTSC)
-            	LDY #255
-            	JSR WAIT65
-            	LDY #56                	; 255+56=311 (PAL) / 255+06=261 (NTSC)
-            	JSR WAIT65
-; =================================================================================================          
-            	; ici synchro précise => cycle 0 / last VBL line
-		; complete line + set int
-		;
-		;
+		; set INT
             	LDX #<(20280-2)			; PAL refresh rate/cycles 
 		LDY #>(20280-2)      
             	STX $C404                   
@@ -447,7 +449,7 @@ LOOP4		LDA bMark			; bmark3
 		STA $300,X
 		DEX
 		BPL -
-debug		JMP $300			; reboot/reload
+		JMP $300			; reboot/reload
 ; =================================================================================================
 BlinkCursor
 !zone
@@ -1274,13 +1276,6 @@ D_REGA = $8410
 D_REGB = $88F2
 D_REGC = $89C8
 D_REGD = $8A0A
-
-; FRAMEMAX     	= 3072
-TLFrames		!byte <358, <2328, <3072 
-THFrames		!byte >358, >2328, >3072
-
-THexa		!TEXT "0123456789ABCDEF"
-TFIRSTSEC 	!byte  $18,$10,$08,$00
 ; =================================================================================================
 !align 255,0
 WAIT65              ; = attend Y * 65 cycles exactement (JSR/RTS compris -> APPEL EN 8 cycles obligatoire -> LDY #xx / JSR WAIT65)
@@ -1351,5 +1346,6 @@ TEXT4		!text "CODE...............GROUiK/FRENCH TOUCH",00
 TEXT5		!text "GFX...grabbed from ANDY SLOANE's works",00
 TEXT6		!text "MUSIC.............................BFOX",00
 DataReboot	!byte $AD,$81,$C0,$AD,$81,$C0,$4C,$00,$C6
+THexa		!TEXT "0123456789ABCDEF"
 ; =================================================================================================
 EO_MAIN
